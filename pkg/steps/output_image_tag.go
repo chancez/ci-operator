@@ -45,7 +45,7 @@ func (s *outputImageTagStep) Run(ctx context.Context, dry bool) error {
 		fromImage = from.Image.Name
 	}
 
-	is := newImageStream(s.config.To.Namespace, s.config.To.Name)
+	is := newImageStream(toNamespace, s.config.To.Name)
 	ist := s.imageStreamTag(fromImage)
 
 	return createImageStreamWithTag(s.isClient, s.istClient, is, ist, dry)
