@@ -2,7 +2,6 @@ package steps
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	imageapi "github.com/openshift/api/image/v1"
 	"github.com/openshift/ci-operator/pkg/api"
 	imageclientset "github.com/openshift/client-go/image/clientset/versioned/typed/image/v1"
-	coreapi "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -36,6 +34,7 @@ func (s *outputImageTagStep) Run(ctx context.Context, dry bool) error {
 	} else {
 		log.Printf("Tagging %s into %s/%s:%s", s.config.From, toNamespace, s.config.To.Name, s.config.To.Tag)
 	}
+
 	fromImage := "dry-fake"
 	if !dry {
 		from, err := s.istClient.ImageStreamTags(s.jobSpec.Namespace).Get(fmt.Sprintf("%s:%s", api.PipelineImageStream, s.config.From), meta.GetOptions{})
@@ -44,25 +43,23 @@ func (s *outputImageTagStep) Run(ctx context.Context, dry bool) error {
 		}
 		fromImage = from.Image.Name
 	}
+
+	is := newImageStream(toNamespace, s.config.To.Name)
 	ist := s.imageStreamTag(fromImage)
-	if dry {
-		istJSON, err := json.MarshalIndent(ist, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal imagestreamtag: %v", err)
-		}
-		fmt.Printf("%s\n", istJSON)
-		return nil
+
+	if err := createImageStream(s.isClient, is, dry); err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("could not create output imagestream: %v", err)
 	}
 
 	// TODO: this step is "force update" today, but that behavior should be optional in the future
 	//   since other steps are "idempotent". However, the override case supports promotion of machine-os-content
 	//   and will be fixed as part of that.
-	if err := s.istClient.ImageStreamTags(toNamespace).Delete(ist.Name, nil); err != nil && !errors.IsNotFound(err) {
+	if err := s.istClient.ImageStreamTags(ist.Namespace).Delete(ist.Name, nil); err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("could not remove output imagestreamtag: %v", err)
 	}
 
 	// Create if not exists, if it already exists, then we have nothing to do.
-	if _, err := s.istClient.ImageStreamTags(toNamespace).Create(ist); err != nil && !errors.IsAlreadyExists(err) {
+	if err := createImageStreamTag(s.istClient, ist, dry); err != nil && !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("could not create output imagestreamtag: %v", err)
 	}
 	return nil
@@ -139,22 +136,10 @@ func (s *outputImageTagStep) namespace() string {
 }
 
 func (s *outputImageTagStep) imageStreamTag(fromImage string) *imageapi.ImageStreamTag {
-	return &imageapi.ImageStreamTag{
-		ObjectMeta: meta.ObjectMeta{
-			Name:      fmt.Sprintf("%s:%s", s.config.To.Name, s.config.To.Tag),
-			Namespace: s.namespace(),
-		},
-		Tag: &imageapi.TagReference{
-			ReferencePolicy: imageapi.TagReferencePolicy{
-				Type: imageapi.LocalTagReferencePolicy,
-			},
-			From: &coreapi.ObjectReference{
-				Kind:      "ImageStreamImage",
-				Name:      fmt.Sprintf("%s@%s", api.PipelineImageStream, fromImage),
-				Namespace: s.jobSpec.Namespace,
-			},
-		},
-	}
+	return newImageStreamTag(
+		s.jobSpec.Namespace, api.PipelineImageStream, fromImage,
+		s.namespace(), s.config.To.Name, s.config.To.Tag,
+	)
 }
 
 func OutputImageTagStep(config api.OutputImageTagStepConfiguration, istClient imageclientset.ImageStreamTagsGetter, isClient imageclientset.ImageStreamsGetter, jobSpec *api.JobSpec) api.Step {
