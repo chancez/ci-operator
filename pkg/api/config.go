@@ -32,11 +32,21 @@ func (config *ReleaseBuildConfiguration) Validate() error {
 		validationErrors = append(validationErrors, validateReleaseTagConfiguration("tag_specification", *config.InputConfiguration.ReleaseTagConfiguration)...)
 	}
 
+	if config.PrepublishConfiguration != nil {
+		validationErrors = append(validationErrors, validatePrepublishConfiguration("prepublish", *config.PrepublishConfiguration)...)
+	}
+
 	// Validate promotion in case of `tag_specification` exists or not
 	if config.PromotionConfiguration != nil && config.InputConfiguration.ReleaseTagConfiguration != nil {
 		validationErrors = append(validationErrors, validatePromotionWithTagSpec(config.PromotionConfiguration, config.InputConfiguration.ReleaseTagConfiguration)...)
 	} else if config.PromotionConfiguration != nil && config.InputConfiguration.ReleaseTagConfiguration == nil {
 		validationErrors = append(validationErrors, validatePromotionConfiguration("promotion", *config.PromotionConfiguration)...)
+	}
+
+	for i, rawStep := range config.RawSteps {
+		if rawStep.PrePublishOutputImageTagStepConfiguration != nil {
+			validationErrors = append(validationErrors, validatePrepublishOutputImageTagStepConfiguration(fmt.Sprintf("raw_steps[%d]", i), rawStep.PrePublishOutputImageTagStepConfiguration)...)
+		}
 	}
 
 	var lines []string
@@ -148,6 +158,14 @@ func validateImageStreamTagReferenceMap(fieldRoot string, input map[string]Image
 			validationErrors = append(validationErrors, fmt.Errorf("%s.%s can't be named 'root'", fieldRoot, k))
 		}
 		validationErrors = append(validationErrors, validateImageStreamTagReference(fmt.Sprintf("%s.%s", fieldRoot, k), v)...)
+	}
+	return validationErrors
+}
+
+func validatePrepublishConfiguration(fieldRoot string, input PrepublishConfiguration) []error {
+	var validationErrors []error
+	if len(input.Namespace) == 0 {
+		validationErrors = append(validationErrors, fmt.Errorf("%s: no namespace defined", fieldRoot))
 	}
 	return validationErrors
 }
@@ -285,6 +303,23 @@ func validateReleaseBuildConfiguration(input *ReleaseBuildConfiguration) []error
 	}
 
 	validationErrors = append(validationErrors, validateResources("resources", input.Resources)...)
+	return validationErrors
+}
+
+func validatePrepublishOutputImageTagStepConfiguration(fieldRoot string, input *PrePublishOutputImageTagStepConfiguration) []error {
+	var validationErrors []error
+
+	if len(input.From) == 0 {
+		validationErrors = append(validationErrors, fmt.Errorf("%s.from: no from image defined", fieldRoot))
+	}
+
+	if len(input.To.Namespace) == 0 {
+		validationErrors = append(validationErrors, fmt.Errorf("%s.to: no namespace defined", fieldRoot))
+	}
+
+	if len(input.To.Name) == 0 {
+		validationErrors = append(validationErrors, fmt.Errorf("%s.to: no name defined", fieldRoot))
+	}
 	return validationErrors
 }
 
